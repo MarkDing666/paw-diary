@@ -1351,10 +1351,15 @@ const Cloud = (() => {
   }
 
   /* ---- family section on the 狗狗 page ---- */
+  let famSig = '';
   function renderFamily(){
     const box = $('#familySec'); if (!box) return;
-    if (!st.member || !st.dog){ box.innerHTML = ''; return; }
+    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; return; }
     const ms = members(), name = dogName();
+    // only redraw when something changed, so a half-confirmed button isn't reset by a background sync
+    const sig = JSON.stringify([ms, st.dog.holder, st.dog.famCode, name, st.member.id]);
+    if (sig === famSig && box.firstChild) return;
+    famSig = sig;
     box.innerHTML = `<h2 style="--hl:var(--rose)">${esc(name)}的家人</h2>
       <div class="fam">${ms.map(m => `<div class="frow"><span class="fava pb ${st.dog.holder === m.id ? 'on' : ''}">${icon('heart', 'var(--rose)')}</span>
         <div class="ftxt"><b>${esc(name)}${esc(m.role)}</b>${m.id === st.member.id ? ' <span class="muted">（这台手机）</span>' : ''}<small>${st.dog.holder === m.id ? `${esc(name)}现在跟着` : '不在身边'}</small></div>
