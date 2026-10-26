@@ -18,7 +18,7 @@
 <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=ZCOOL+KuaiLe&display=swap">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="/style.css?v=9">
+<link rel="stylesheet" href="/style.css?v=10">
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -134,6 +134,7 @@
             <input id="importIn" type="file" accept="application/json,.json" hidden>
           </div>
         </div>
+        <div class="sec danger" id="dangerSec"></div>
         <p class="note" id="storeNote"></p>
       </div>
     </section>
@@ -160,6 +161,14 @@
   </div>
 </div>
 
+<div class="lbx" id="confirmBox" hidden>
+  <div class="askcard pb" role="alertdialog" aria-labelledby="confirmTitle">
+    <h2 id="confirmTitle"></h2>
+    <p class="muted"></p>
+    <div class="btnrow"><button class="btn pb" id="confirmCancel" style="--fill:var(--paper-2)">取消</button><button class="btn pb" id="confirmOk" style="--fill:var(--rose)">确认</button></div>
+  </div>
+</div>
+
 <div class="lbx" id="lbx" hidden>
   <div class="polaroid pb" role="dialog" aria-label="照片">
     <img id="lbImg" alt="">
@@ -171,6 +180,6 @@
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="/app.js?v=9"></script>
+<script src="/app.js?v=10"></script>
 </body>
 </html>

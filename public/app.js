@@ -627,7 +627,7 @@ function renderTop(){
   $('#topAva').innerHTML = d.photo ? `<img src="${d.photo}" alt="">` : icon('dog','var(--clay)');
   $('#topName').textContent = d.name || '我的狗狗';
   const sub=[Cloud.familyLine(), d.breed, ageText(d.birthday)].filter(Boolean).join(' · ');
-  $('#topSub').textContent = sub || '点这里填写资料';
+  $('#topSub').textContent = sub;
   const today=dayKey(Date.now()), poops=S.events.filter(e=>e.type==='poop');
   $('#topPoop').textContent = poops.filter(e=>dayKey(e.t)===today).length;
   $('#topSince').textContent = poops[0] ? `距上次便便 ${fmtSince(Date.now()-poops[0].t)}` : '还没有便便记录';
@@ -1354,7 +1354,7 @@ const Cloud = (() => {
   let famSig = '';
   function renderFamily(){
     const box = $('#familySec'); if (!box) return;
-    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; return; }
+    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; const dz = $('#dangerSec'); if (dz) dz.innerHTML = ''; return; }
     const ms = members(), name = dogName();
     // only redraw when something changed, so a half-confirmed button isn't reset by a background sync
     const sig = JSON.stringify([ms, st.dog.holder, st.dog.famCode, name, st.member.id]);
@@ -1367,24 +1367,47 @@ const Cloud = (() => {
       ${st.dog.famCode ? `<div class="codecard pb" style="margin-top:12px;--fill:var(--rose)"><b>邀请家人一起照顾${esc(name)}</b><span class="code">${esc(st.dog.famCode)}</span>
         <span class="muted">把链接发给家人，对方打开后选自己的身份（比如${esc(name)}妈妈）。一只狗狗最多绑定两台手机。</span>
         <div class="btnrow" style="margin-top:0"><button class="btn small pb" id="famShare" style="--fill:var(--rose)">发家庭邀请链接</button><button class="btn small pb" id="famCopy" style="--fill:var(--paper-2)">复制家庭码</button></div></div>`
-        : `<p class="muted" style="margin-top:8px">已经绑定两台手机了。换手机或者手机丢了，可以先把旧的那台「移出」，再重新邀请。</p>`}
-      <div class="btnrow"><button class="btn small pb" id="leaveFam" style="--fill:var(--paper-2)">${ms.length > 1 ? `这台手机退出${esc(name)}的家庭` : `删除${esc(name)}`}</button></div>`;
+        : `<p class="muted" style="margin-top:8px">已经绑定两台手机了。换手机或者手机丢了，可以先把旧的那台「移出」，再重新邀请。</p>`}`;
+    const danger = $('#dangerSec');
+    if (danger) danger.innerHTML = `<button class="btn small pb dangerbtn" id="leaveFam">${ms.length > 1 ? `这台手机退出${esc(name)}的家庭` : `删除${esc(name)}`}</button>`;
   }
   document.addEventListener('click', async e => {
     const t = e.target.closest('#famShare,#famCopy,#leaveFam,[data-kick]'); if (!t) return;
     if (t.id === 'famShare') return shareLink(`${location.origin}/?family=${st.dog.famCode}`, `来爪印日记和我一起照顾${dogName()}！家庭码 ${st.dog.famCode}`);
     if (t.id === 'famCopy') return copyText(st.dog.famCode);
     if (t.dataset.kick){
-      if (!t.dataset.armed){ t.dataset.armed = '1'; t.textContent = '确认移出'; setTimeout(() => { if (t.isConnected){ t.dataset.armed = ''; t.textContent = '移出'; } }, 4000); return; }
+      const who = `${dogName()}${roleOf(t.dataset.kick)}`;
+      if (!await askConfirm({title: `移出${who}？`, text: `那台手机就不能再看和记录${dogName()}了。之后可以重新邀请。`, ok: '移出'})) return;
       try { await api('/api/dog/remove-member', {id: t.dataset.kick}); showToast('已移出，那台手机不能再记录了'); sync(); } catch (_){ showToast('没移出成功，检查一下网络'); }
       return;
     }
     if (t.id === 'leaveFam'){
-      const last = members().length <= 1;
-      if (!t.dataset.armed){ t.dataset.armed = '1'; t.textContent = last ? `确认删除？${dogName()}的所有记录都会清空` : '确认退出？'; return; }
+      const last = members().length <= 1, name = dogName();
+      const first = last
+        ? {title: `删除${name}？`, text: `${name}的所有日记、足迹和狗友都会清空，不能恢复。`, ok: '确认删除'}
+        : {title: `退出${name}的家庭？`, text: `退出后这台手机不能再看和记录${name}。${name}的记录还会留在${name}${roleOf(other() && other().id)}那里。`, ok: '确认退出'};
+      if (!await askConfirm(first)) return;
+      const second = last
+        ? {title: '你确定吗？', text: `这是最后一次确认。删除后${name}的记录全部消失，「${name}」这个名字也会被别人用。`, ok: `确定删除${name}`}
+        : {title: '你确定吗？', text: '这是最后一次确认。', ok: '确定退出'};
+      if (!await askConfirm(second)) return;
       try { const r = await api('/api/dog/leave'); await resetLocal(); showToast(r.dogDeleted ? '已删除' : '已退出'); renderSetup('start'); } catch (_){ showToast('没成功，检查一下网络'); }
     }
   });
+
+  function askConfirm({title, text, ok}){
+    return new Promise(resolve => {
+      const box = $('#confirmBox');
+      box.querySelector('h2').textContent = title;
+      box.querySelector('p').textContent = text;
+      const yes = $('#confirmOk'), no = $('#confirmCancel');
+      yes.textContent = ok || '确认';
+      const done = v => { box.hidden = true; yes.onclick = no.onclick = box.onclick = null; resolve(v); };
+      yes.onclick = () => done(true); no.onclick = () => done(false);
+      box.onclick = e => { if (e.target === box) done(false); };
+      box.hidden = false; no.focus();
+    });
+  }
 
   /* ---- first run: create or join ---- */
   let nameTimer = null, nameOk = false, chosenRole = null, joinInfo = null, setupPhoto = null;
