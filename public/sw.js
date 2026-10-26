@@ -1,6 +1,6 @@
 // Offline shell: app files come from the network first (so updates land), the cache is the fallback.
-const CACHE = 'pawdiary-v6';
-const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/manifest.webmanifest', '/icon-192.png', '/apple-touch-icon.png',
+const CACHE = 'pawdiary-v7';
+const SHELL = ['/', '/index.html', '/style.css?v=7', '/app.js?v=7', '/manifest.webmanifest', '/icon-192.png', '/apple-touch-icon.png',
   'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js', 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css'];
 
 self.addEventListener('install', e => {
@@ -16,7 +16,8 @@ self.addEventListener('fetch', e => {
   const isShell = url.origin === location.origin || url.hostname === 'unpkg.com';
   if (!isShell) return; // map tiles, fonts and place names go straight to the network
   e.respondWith(
-    fetch(e.request).then(res => {
+    // always check the server for a newer copy instead of trusting the browser's HTTP cache
+    (url.origin === location.origin ? fetch(e.request.url, {cache: 'no-cache', credentials: 'same-origin'}) : fetch(e.request)).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
       return res;
     }).catch(() => caches.match(e.request).then(r => r || caches.match('/index.html')))
