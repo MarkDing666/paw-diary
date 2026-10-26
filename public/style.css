@@ -297,7 +297,7 @@ fieldset.field{border:0;padding:0;margin:0}
 .namestat[data-ok="0"]{color:var(--rose)}
 .roles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:6px}
 .rolechip{border:0;border-radius:999px;padding:7px 0;background:var(--paper);--fill:var(--paper-2);font-family:var(--font-display);font-size:16px;color:var(--graphite)}
-.rolechip[aria-pressed="true"]{--fill:var(--sun)}
+.rolechip[aria-pressed="true"]{--fill:var(--sun);background:color-mix(in srgb,var(--sun) 35%,var(--paper));font-weight:700}
 .rolechip:disabled{opacity:.35;cursor:not-allowed;text-decoration:line-through}
 .joindog{display:flex;align-items:center;gap:12px;font-family:var(--font-display);font-size:22px;margin:4px 0 10px}
 .joindog b{font-weight:400}

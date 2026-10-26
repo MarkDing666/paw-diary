@@ -718,6 +718,7 @@ function renderLog(){
     if (e.type==='poop'){ const st=e.status||'ok'; txt+=`<button class="tag pb ${st}" data-cycle="${e.id}" title="点一下换状态">${STOOL[st]}</button>`; }
     if (e.type==='meet' && e.friend) txt=`<b>遇到 ${esc(e.friend)}</b>`;
     if (e.onWalk) meta+=' · 遛狗途中';
+    if (e.by && Cloud.members().length>=2) meta+=` · ${esc(e.by)}记的`;
     const extra=(e.type==='photo'&&e.photo?`<img class="thumb" src="${e.photo}" alt="打卡照片" data-photo="${e.id}">`:'')+(e.note?`<div class="note">${esc(e.note)}</div>`:'');
     h+=`<div class="row"><time>${hm(e.t)}</time><span class="rico pb" style="--c:var(--${T.color})">${icon(T.icon,`var(--${T.color})`)}</span><div class="rtxt">${txt}<small>${meta}</small>${extra}</div><button class="del" data-del="${e.id}" aria-label="删除这条">×</button></div>`;
   });
