@@ -39,7 +39,14 @@ const SCHEMA = [
 // added after launch; ALTER fails harmlessly when the column already exists
 const UPGRADES = [
   `ALTER TABLE members ADD COLUMN recover_hash TEXT`,
-  `CREATE INDEX IF NOT EXISTS members_recover ON members (recover_hash)`
+  `CREATE INDEX IF NOT EXISTS members_recover ON members (recover_hash)`,
+  `ALTER TABLE members ADD COLUMN username TEXT`,
+  `ALTER TABLE members ADD COLUMN user_key TEXT`,
+  `ALTER TABLE members ADD COLUMN pw_salt TEXT`,
+  `ALTER TABLE members ADD COLUMN pw_hash TEXT`,
+  `ALTER TABLE members ADD COLUMN pw_fails INTEGER DEFAULT 0`,
+  `ALTER TABLE members ADD COLUMN pw_lock INTEGER DEFAULT 0`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS members_user ON members (user_key)`
 ];
 let schemaReady = null;
 function ensureSchema(db){
@@ -49,6 +56,30 @@ function ensureSchema(db){
   })().catch(e => { schemaReady = null; throw e; });
   return schemaReady;
 }
+/* ---------- accounts: username + password, so a family member can log in again on any phone ---------- */
+const userKey = s => clean(s, 30).toLowerCase();
+function validAccount(username, password){
+  const u = clean(username, 30);
+  if (u.length < 2 || u.length > 20) return {error: 'username_length'};
+  if (!/^[\p{L}\p{N}_.-]+$/u.test(u)) return {error: 'username_chars'};
+  if (typeof password !== 'string' || password.length < 6 || password.length > 64) return {error: 'password_length'};
+  return {username: u, key: userKey(u), password};
+}
+async function pbkdf2(password, saltHex){
+  const salt = Uint8Array.from(saltHex.match(/../g).map(h => parseInt(h, 16)));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100000}, key, 256);
+  return [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function setAccount(db, memberId, acc){
+  const salt = rand(16);
+  await db.prepare('UPDATE members SET username = ?, user_key = ?, pw_salt = ?, pw_hash = ?, pw_fails = 0, pw_lock = 0 WHERE id = ?')
+    .bind(acc.username, acc.key, salt, await pbkdf2(acc.password, salt), memberId).run();
+}
+async function usernameTaken(db, key, exceptId){
+  return !!(await db.prepare('SELECT 1 FROM members WHERE user_key = ? AND id != ?').bind(key, exceptId || '').first());
+}
+
 // 找回码: 12 characters shown as XXXX-XXXX-XXXX; only its hash is stored
 const recoverHash = code => sha256('recover:' + String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, ''));
 
@@ -156,6 +187,12 @@ async function handleApi(req, env, url){
     return json({available: !hit, name: v.name});
   }
 
+  if (path === '/api/username-check' && req.method === 'GET'){
+    const v = validAccount(url.searchParams.get('u'), 'xxxxxx');
+    if (v.error) return json({available: false, reason: v.error});
+    return json({available: !(await usernameTaken(db, v.key)), username: v.username});
+  }
+
   const av = path.match(/^\/api\/avatar\/([a-f0-9]{8,64})$/);
   if (av && req.method === 'GET'){
     const d = await db.prepare('SELECT avatar FROM dogs WHERE id = ?').bind(av[1]).first();
@@ -176,6 +213,22 @@ async function handleApi(req, env, url){
 
   if (req.method !== 'POST') return fail(405, 'method');
 
+  if (path === '/api/login'){
+    const b = await body(req);
+    const m = await db.prepare('SELECT * FROM members WHERE user_key = ?').bind(userKey(b.username)).first();
+    if (!m || !m.pw_hash) return fail(401, 'wrong_login');
+    if ((m.pw_lock || 0) > now) return fail(429, 'locked', {until: m.pw_lock});
+    if (typeof b.password !== 'string' || await pbkdf2(b.password, m.pw_salt) !== m.pw_hash){
+      const fails = (m.pw_fails || 0) + 1;
+      await db.prepare('UPDATE members SET pw_fails = ?, pw_lock = ? WHERE id = ?').bind(fails >= 5 ? 0 : fails, fails >= 5 ? now + 10 * 60000 : 0, m.id).run();
+      return fail(401, 'wrong_login', {left: fails >= 5 ? 0 : 5 - fails});
+    }
+    const token = rand(24);
+    await db.prepare('UPDATE members SET token_hash = ?, seen = ?, pw_fails = 0, pw_lock = 0 WHERE id = ?').bind(await sha256(token), now, m.id).run(); // the old phone is signed out
+    const dog = await db.prepare('SELECT * FROM dogs WHERE id = ?').bind(m.dog_id).first();
+    return json({member: {id: m.id, token, dogId: m.dog_id, role: m.role, username: m.username}, dog: dogForFamily(dog, await membersOf(db, m.dog_id), true)});
+  }
+
   // a phone that lost its data gets its place in the family back with the member's 找回码
   if (path === '/api/recover'){
     const b = await body(req);
@@ -194,6 +247,12 @@ async function handleApi(req, env, url){
     const v = validName(b.name);
     if (v.error) return fail(400, v.error);
     if (!ROLES.includes(b.role)) return fail(400, 'bad_role');
+    let acc = null;
+    if (b.username !== undefined){
+      acc = validAccount(b.username, b.password);
+      if (acc.error) return fail(400, acc.error);
+      if (await usernameTaken(db, acc.key)) return fail(409, 'username_taken');
+    }
     const id = rand(16);
     try {
       await db.prepare(`INSERT INTO dogs (id, name, name_key, code, fam_code, profile, avatar, photo, pv, created) VALUES (?,?,?,?,?,?,?,?,?,?)`)
@@ -205,6 +264,7 @@ async function handleApi(req, env, url){
     }
     const mem = await newMember(db, id, b.role, now);
     await db.prepare('UPDATE dogs SET holder = ?, holder_at = ? WHERE id = ?').bind(mem.id, now, id).run();
+    if (acc) await setAccount(db, mem.id, acc);
     const dog = await db.prepare('SELECT * FROM dogs WHERE id = ?').bind(id).first();
     return json({member: Object.assign(mem, {dogId: id, role: b.role}), dog: dogForFamily(dog, await membersOf(db, id), true)});
   }
@@ -215,6 +275,12 @@ async function handleApi(req, env, url){
     const d = await db.prepare('SELECT * FROM dogs WHERE fam_code = ?').bind(code).first();
     if (!d) return fail(404, 'no_such_code');
     if (!ROLES.includes(b.role)) return fail(400, 'bad_role');
+    let acc = null;
+    if (b.username !== undefined){
+      acc = validAccount(b.username, b.password);
+      if (acc.error) return fail(400, acc.error);
+      if (await usernameTaken(db, acc.key)) return fail(409, 'username_taken');
+    }
     const ms = await membersOf(db, d.id);
     if (ms.length >= MAX_MEMBERS) return fail(409, 'family_full');
     if (ms.some(m => m.role === b.role)) return fail(409, 'role_taken');
@@ -226,6 +292,7 @@ async function handleApi(req, env, url){
       await db.prepare('DELETE FROM members WHERE id = ?').bind(mem.id).run();
       return fail(409, 'family_full');
     }
+    if (acc) await setAccount(db, mem.id, acc);
     const dog = await db.prepare('SELECT * FROM dogs WHERE id = ?').bind(d.id).first();
     return json({member: Object.assign(mem, {dogId: d.id, role: b.role}), dog: dogForFamily(dog, after, true)});
   }
@@ -304,6 +371,15 @@ async function handleApi(req, env, url){
     const other = ms.find(m => m.id !== me.id);
     if (dog.holder === me.id && other) await db.prepare('UPDATE dogs SET holder = ?, holder_at = ? WHERE id = ?').bind(other.id, now, dog.id).run();
     return json({ok: true, dogDeleted: false});
+  }
+
+  if (path === '/api/account'){
+    const b = await body(req);
+    const acc = validAccount(b.username ?? me.username, b.password);
+    if (acc.error) return fail(400, acc.error);
+    if (await usernameTaken(db, acc.key, me.id)) return fail(409, 'username_taken');
+    await setAccount(db, me.id, acc);
+    return json({ok: true, username: acc.username});
   }
 
   if (path === '/api/recovery-code'){
@@ -456,7 +532,7 @@ async function sync(req, db, me, dog, now){
   }
 
   return json({
-    dog: dogForFamily(fresh, members, b.pv !== fresh.pv), you: me.id, accepted,
+    dog: dogForFamily(fresh, members, b.pv !== fresh.pv), you: me.id, username: me.username || null, accepted,
     events, evCursor, more: events.length === 400,
     cells: cellRows.map(r => r.k), cellCursor,
     friends, meets, pokes, myWeek: week && fresh.week_key === week ? (fresh.week_dist || 0) : 0, now

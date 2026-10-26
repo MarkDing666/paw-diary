@@ -1016,7 +1016,7 @@ const Cloud = (() => {
     evCursor: lsGet('pawdiary.evCursor', 0), cellCursor: lsGet('pawdiary.cellCursor', 0),
     friends: [], myWeek: 0, share: lsGet('pawdiary.share', true),
     timer: null, busy: false, walkEnded: null, markers: new Map(), seenWalking: new Set(),
-    askedThisOpen: false, hiddenAt: 0, lastErr: null, pendingFriend: null, setupMode: null
+    askedThisOpen: false, hiddenAt: 0, lastErr: null, pendingFriend: null, setupMode: null, username: lsGet('pawdiary.username', null)
   };
   const me = () => st.member;
   const dogName = () => (S.dog && S.dog.name) || (st.dog && st.dog.name) || '狗狗';
@@ -1033,7 +1033,7 @@ const Cloud = (() => {
     if (st.member){ headers['x-paw-id'] = st.member.id; headers['x-paw-token'] = st.member.token; }
     const res = await fetch(path, method === 'GET' ? {headers, cache: 'no-store'} : {method: 'POST', headers, body: JSON.stringify(data || {})});
     let j = {}; try { j = await res.json(); } catch (_){}
-    if (!res.ok){ const e = new Error(j.error || 'http'); e.status = res.status; e.code = j.error; throw e; }
+    if (!res.ok){ const e = new Error(j.error || 'http'); e.status = res.status; e.code = j.error; e.left = j.left; throw e; }
     return j;
   }
   function thumb(dataUrl, size, q){
@@ -1154,6 +1154,7 @@ const Cloud = (() => {
       st.evCursor = r.evCursor || st.evCursor; lsSet('pawdiary.evCursor', st.evCursor);
       applyCells(r.cells || []); st.cellCursor = r.cellCursor || st.cellCursor; lsSet('pawdiary.cellCursor', st.cellCursor);
       st.friends = r.friends || []; st.myWeek = r.myWeek || 0;
+      if (r.username !== undefined && r.username !== st.username){ st.username = r.username; lsSet('pawdiary.username', st.username); renderAccount(); }
       (r.meets || []).forEach(onMeet);
       (r.pokes || []).forEach(onPoke);
       renderFriendPins(); renderLiveChip(); if (S.view === 'friends') renderPage(); if (S.view === 'dog') renderFamily();
@@ -1172,7 +1173,7 @@ const Cloud = (() => {
 
   /* ---- "年糕跟你在一起吗？" ---- */
   function maybeAsk(){
-    if (st.askedThisOpen || members().length < 2 || !$('#setup').hidden || !$('#recoverBox').hidden) return;
+    if (st.askedThisOpen || members().length < 2 || !$('#setup').hidden || !$('#acctBox').hidden) return;
     st.askedThisOpen = true;
     const box = $('#holdAsk'), d = S.dog || {};
     box.querySelector('.ava').innerHTML = d.photo ? `<img src="${d.photo}" alt="">` : icon('dog', 'var(--clay)');
@@ -1354,7 +1355,7 @@ const Cloud = (() => {
   let famSig = '';
   function renderFamily(){
     const box = $('#familySec'); if (!box) return;
-    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; const dz = $('#dangerSec'); if (dz) dz.innerHTML = ''; renderRecover(); return; }
+    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; const dz = $('#dangerSec'); if (dz) dz.innerHTML = ''; renderAccount(); return; }
     const ms = members(), name = dogName();
     // only redraw when something changed, so a half-confirmed button isn't reset by a background sync
     const sig = JSON.stringify([ms, st.dog.holder, st.dog.famCode, name, st.member.id]);
@@ -1368,7 +1369,7 @@ const Cloud = (() => {
         <span class="muted">把链接发给家人，对方打开后选自己的身份（比如${esc(name)}妈妈）。一只狗狗最多绑定两台手机。</span>
         <div class="btnrow" style="margin-top:0"><button class="btn small pb" id="famShare" style="--fill:var(--rose)">发家庭邀请链接</button><button class="btn small pb" id="famCopy" style="--fill:var(--paper-2)">复制家庭码</button></div></div>`
         : `<p class="muted" style="margin-top:8px">已经绑定两台手机了。换手机或者手机丢了，可以先把旧的那台「移出」，再重新邀请。</p>`}`;
-    renderRecover();
+    renderAccount();
     const danger = $('#dangerSec');
     if (danger) danger.innerHTML = `<button class="btn small pb dangerbtn" id="leaveFam">${ms.length > 1 ? `这台手机退出${esc(name)}的家庭` : `删除${esc(name)}`}</button>`;
   }
@@ -1414,7 +1415,8 @@ const Cloud = (() => {
   let nameTimer = null, nameOk = false, chosenRole = null, joinInfo = null, setupPhoto = null;
   async function resetLocal(){
     st.member = null; st.dog = null; st.outbox = []; st.cellsOut = []; st.evCursor = 0; st.cellCursor = 0; st.friends = [];
-    ['pawdiary.member', 'pawdiary.cloudDog', 'pawdiary.evCursor', 'pawdiary.cellCursor', 'pawdiary.recover'].forEach(k => lsSet(k, null));
+    ['pawdiary.member', 'pawdiary.cloudDog', 'pawdiary.evCursor', 'pawdiary.cellCursor', 'pawdiary.recover', 'pawdiary.username'].forEach(k => lsSet(k, null));
+    st.username = null;
     S.events = []; S.dog = null; S.explored.clear(); expPts.length = 0;
     await DB.clearAll().catch(() => {});
     renderAll(); renderMap(); renderDogPin(); renderDogView(); map.triggerRepaint();
@@ -1427,20 +1429,66 @@ const Cloud = (() => {
   function roleChips(taken){
     return `<div class="roles">${ROLES.map(r => `<button type="button" class="rolechip pb" data-role="${r}" ${taken && taken.includes(r) ? 'disabled' : ''} aria-pressed="${chosenRole === r}">${r}</button>`).join('')}</div>`;
   }
+  /* ---- account fields (shared by create, join and the account dialog) ---- */
+  const acct = {userOk: false, timer: null};
+  function accountFields(prefix, hint){
+    return `<div class="acctbox">
+      <p class="muted acctnote">${hint || '设一个账号和密码。换手机或者删了 App，登录就能找回狗狗和所有记录。'}</p>
+      <div class="field"><label for="${prefix}User">账号（2～20 个字，字母、数字或中文）</label><input id="${prefix}User" maxlength="20" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="比如：niangao_baba"></div>
+      <p class="namestat" id="${prefix}UserStat"></p>
+      <div class="field"><label for="${prefix}Pw">密码（至少 6 位）</label><input id="${prefix}Pw" type="password" maxlength="64" autocomplete="new-password" placeholder="••••••"></div>
+    </div>`;
+  }
+  function wireAccount(prefix, onChange){
+    const u = $('#' + prefix + 'User'), pw = $('#' + prefix + 'Pw'), stat = $('#' + prefix + 'UserStat');
+    acct.userOk = false;
+    u.addEventListener('input', () => {
+      acct.userOk = false; onChange();
+      const v = u.value.trim(); clearTimeout(acct.timer);
+      if (!v){ stat.textContent = ''; return; }
+      if (v.length < 2){ stat.textContent = '账号至少 2 个字'; stat.dataset.ok = '0'; return; }
+      if (!/^[\p{L}\p{N}_.-]+$/u.test(v)){ stat.textContent = '账号只能用字母、数字、中文和 _ . -'; stat.dataset.ok = '0'; return; }
+      stat.textContent = '查一下有没有人用…'; stat.dataset.ok = '';
+      acct.timer = setTimeout(async () => {
+        try { const r = await api('/api/username-check?u=' + encodeURIComponent(v), null, 'GET');
+          if (u.value.trim() !== v) return;
+          acct.userOk = !!r.available; stat.textContent = r.available ? `「${v}」可以用` : `「${v}」已经有人用了，换一个`; stat.dataset.ok = r.available ? '1' : '0'; onChange(); }
+        catch (_){ stat.textContent = '连不上服务器，检查一下网络'; }
+      }, 450);
+    });
+    pw.addEventListener('input', onChange);
+  }
+  const accountReady = prefix => acct.userOk && ($('#' + prefix + 'Pw').value || '').length >= 6;
+  const accountValue = prefix => ({username: $('#' + prefix + 'User').value.trim(), password: $('#' + prefix + 'Pw').value});
+  const accountError = code => ({username_taken: '这个账号刚刚被别人用了，换一个', username_length: '账号要 2～20 个字', username_chars: '账号只能用字母、数字、中文和 _ . -', password_length: '密码至少 6 位'})[code];
+
   function renderSetup(mode, note){
     st.setupMode = mode;
     const box = $('#setup'), card = $('#setupCard');
-    box.hidden = false; $('#holdAsk').hidden = true;
+    box.hidden = false; $('#holdAsk').hidden = true; $('#acctBox').hidden = true;
     if (mode === 'start'){
       card.innerHTML = `<div class="logo">${icon('paw', 'var(--rose)')}</div><h1>爪印日记</h1>
         ${note ? `<p class="setnote pb">${esc(note)}</p>` : ''}
         <p class="muted">每只狗狗有一个独一无二的名字。一只狗狗最多绑定两台手机，比如爸爸和妈妈，一起记录。</p>
         <button class="btn primary pb" id="goCreate">新建我的狗狗</button>
         <button class="btn pb" id="goJoin" style="--fill:var(--sky)">家人已经建好了，我要加入</button>
-        <button class="linkbtn" id="goRecover">换了手机、删了 App？用找回码找回我的狗狗</button>`;
+        <button class="btn pb" id="goLogin" style="--fill:var(--paper-2)">已有账号，登录</button>`;
       $('#goCreate').onclick = () => renderSetup('create');
       $('#goJoin').onclick = () => renderSetup('join');
-      $('#goRecover').onclick = () => renderSetup('recover');
+      $('#goLogin').onclick = () => renderSetup('login');
+      return;
+    }
+    if (mode === 'login'){
+      card.innerHTML = `<button class="back" id="setBack" aria-label="返回">‹ 返回</button><h1>登录</h1>
+        <p class="muted">登录后，狗狗和所有记录都会回到这台手机。原来那台手机上的这个账号会自动退出。</p>
+        <div class="field"><label for="logUser">账号</label><input id="logUser" maxlength="20" autocomplete="username" autocapitalize="none" spellcheck="false"></div>
+        <div class="field"><label for="logPw">密码</label><input id="logPw" type="password" maxlength="64" autocomplete="current-password"></div>
+        <p class="namestat" id="logStat"></p>
+        <button class="btn primary pb" id="doLogin">登录</button>
+        <p class="muted small">忘了密码？让家里另一个人在「狗狗」页把你移出再重新邀请；如果只有你一个人，联系网站管理员帮你重置。</p>`;
+      $('#setBack').onclick = () => renderSetup('start');
+      $('#doLogin').onclick = login;
+      $('#logPw').addEventListener('keydown', ev => { if (ev.key === 'Enter') login(); });
       return;
     }
     if (mode === 'create'){
@@ -1451,26 +1499,19 @@ const Cloud = (() => {
         <input id="setupPhotoIn" type="file" accept="image/*" hidden>
         <div class="field"><label for="setName">狗狗的名字（不能和别的狗狗重名）</label><input id="setName" maxlength="16" placeholder="比如：年糕" value="${esc(preName)}"></div>
         <p class="namestat" id="nameStat"></p>
-        <div class="field"><label>你是${'它的'}…</label>${roleChips()}</div>
+        <div class="field"><label>你是它的…</label>${roleChips()}</div>
+        ${accountFields('c')}
         ${legacy ? `<p class="muted">这台手机上已有的 ${S.events.length} 条记录会一起带过去。</p>` : ''}
         <button class="btn primary pb" id="doCreate" disabled>创建</button>`;
       $('#setBack').onclick = () => renderSetup('start');
       $('#setName').addEventListener('input', checkName); if (preName) checkName();
       $('#setupPhotoIn').addEventListener('change', async ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; if (!f) return;
-        try { setupPhoto = await readImage(f, 360, true); renderSetup('create'); $('#setName').value && checkName(); } catch (_){ showToast('这张图片打不开，换一张试试'); } });
+        try { setupPhoto = await readImage(f, 360, true); const keep = {n: $('#setName').value, u: $('#cUser').value, p: $('#cPw').value};
+          renderSetup('create'); $('#setName').value = keep.n; $('#cUser').value = keep.u; $('#cPw').value = keep.p;
+          if (keep.n) checkName(); if (keep.u) $('#cUser').dispatchEvent(new Event('input')); } catch (_){ showToast('这张图片打不开，换一张试试'); } });
+      wireAccount('c', updateCreateBtn);
       $('#doCreate').onclick = create;
       updateCreateBtn();
-      return;
-    }
-    if (mode === 'recover'){
-      card.innerHTML = `<button class="back" id="setBack" aria-label="返回">‹ 返回</button><h1>找回我的狗狗</h1>
-        <p class="muted">输入你保存的找回码（在原来那台手机「狗狗」页最下面）。找回后，旧手机上的这个身份会自动退出。</p>
-        <div class="field"><label for="recIn">找回码</label><input id="recIn" maxlength="16" autocomplete="off" autocapitalize="characters" placeholder="XXXX-XXXX-XXXX"></div>
-        <p class="namestat" id="recStat"></p>
-        <button class="btn primary pb" id="doRecover">找回</button>`;
-      $('#setBack').onclick = () => renderSetup('start');
-      $('#doRecover').onclick = recover;
-      $('#recIn').addEventListener('keydown', ev => { if (ev.key === 'Enter') recover(); });
       return;
     }
     if (mode === 'join'){
@@ -1489,10 +1530,10 @@ const Cloud = (() => {
     const b = e.target.closest('[data-role]'); if (!b || b.disabled) return;
     chosenRole = b.dataset.role;
     $('#setupCard').querySelectorAll('[data-role]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-    updateCreateBtn();
-    const jb = $('#doJoin'); if (jb) jb.disabled = !chosenRole;
+    updateCreateBtn(); updateJoinBtn();
   });
-  function updateCreateBtn(){ const b = $('#doCreate'); if (b) b.disabled = !(nameOk && chosenRole); }
+  function updateCreateBtn(){ const b = $('#doCreate'); if (b) b.disabled = !(nameOk && chosenRole && accountReady('c')); }
+  function updateJoinBtn(){ const b = $('#doJoin'); if (b) b.disabled = !(chosenRole && accountReady('j')); }
   function checkName(){
     nameOk = false; updateCreateBtn();
     const v = $('#setName').value.trim(), stat = $('#nameStat');
@@ -1506,26 +1547,31 @@ const Cloud = (() => {
       catch (_){ stat.textContent = '连不上服务器，检查一下网络'; }
     }, 450);
   }
+  function adopt(r){ // a member + dog just came back from the server: make this phone theirs
+    st.member = {id: r.member.id, token: r.member.token, dogId: r.member.dogId, role: r.member.role}; lsSet('pawdiary.member', st.member);
+    if (r.member.username){ st.username = r.member.username; lsSet('pawdiary.username', st.username); }
+    const photo = r.dog.photo; delete r.dog.photo; st.dog = r.dog; lsSet('pawdiary.cloudDog', st.dog);
+    return photo;
+  }
   async function create(){
     const btn = $('#doCreate'); btn.disabled = true; btn.textContent = '创建中…';
-    const name = $('#setName').value.trim();
-    const prof = profileOf(S.dog || {});
+    const name = $('#setName').value.trim(), acc = accountValue('c');
     try {
-      const r = await api('/api/dog/create', {name, role: chosenRole, profile: prof, photo: setupPhoto, avatar: await thumb(setupPhoto, 112, .72)});
+      const r = await api('/api/dog/create', Object.assign({name, role: chosenRole, profile: profileOf(S.dog || {}), photo: setupPhoto, avatar: await thumb(setupPhoto, 112, .72)}, acc));
       const legacy = hasLegacy();
-      st.member = r.member; lsSet('pawdiary.member', st.member);
+      r.member.username = acc.username; adopt(r);
       S.dog = Object.assign({}, S.dog || {}, r.dog.profile, {name: r.dog.name, photo: setupPhoto || ''});
       DB.set('dog', S.dog).catch(() => {});
-      delete r.dog.photo; st.dog = r.dog; lsSet('pawdiary.cloudDog', st.dog);
       if (legacy){ // bring this phone's records along
         S.events.forEach(ev => { const {id, by, ...data} = ev; st.outbox.push({id, t: ev.t, data, v: Math.random()}); });
         st.cellsOut.push(...S.explored); persistQueue();
       }
       st.askedThisOpen = true;
-      finishSetup(`${esc(name)}建好了！你是${esc(name)}${esc(chosenRole)}。`);
+      finishSetup(`${esc(name)}建好了！你是${esc(name)}${esc(chosenRole)}，账号是 ${esc(acc.username)}。`);
     } catch (e){
       btn.disabled = false; btn.textContent = '创建';
       if (e.code === 'name_taken'){ nameOk = false; $('#nameStat').textContent = `「${name}」刚刚被别的狗狗用了，换一个吧`; $('#nameStat').dataset.ok = '0'; }
+      else if (accountError(e.code)){ acct.userOk = e.code !== 'username_taken' && acct.userOk; $('#cUserStat').textContent = accountError(e.code); $('#cUserStat').dataset.ok = '0'; updateCreateBtn(); }
       else showToast('没建成，检查一下网络再试');
     }
   }
@@ -1539,91 +1585,106 @@ const Cloud = (() => {
       chosenRole = null;
       box.innerHTML = `<div class="joindog"><span class="setava small pb">${joinInfo.hasAvatar ? `<img src="/api/avatar/${joinInfo.dogId}?v=${joinInfo.pv}" alt="">` : icon('dog', 'var(--clay)')}</span><b>${esc(joinInfo.name)}</b></div>
         <div class="field"><label>你是${esc(joinInfo.name)}的…</label>${roleChips(joinInfo.taken)}</div>
+        ${accountFields('j')}
         <button class="btn primary pb" id="doJoin" disabled>加入</button>`;
+      wireAccount('j', updateJoinBtn);
       $('#doJoin').onclick = join;
     } catch (e){ box.innerHTML = `<p class="namestat" data-ok="0">${e.code === 'no_such_code' ? '没找到这个家庭码，核对一下' : '连不上服务器，检查一下网络'}</p>`; }
   }
   async function join(){
     const btn = $('#doJoin'); btn.disabled = true; btn.textContent = '加入中…';
+    const acc = accountValue('j');
     try {
-      const r = await api('/api/dog/join', {code: joinInfo.code, role: chosenRole});
+      const r = await api('/api/dog/join', Object.assign({code: joinInfo.code, role: chosenRole}, acc));
       await resetLocal();
-      st.member = r.member; lsSet('pawdiary.member', st.member);
-      const photo = r.dog.photo; delete r.dog.photo; st.dog = r.dog; lsSet('pawdiary.cloudDog', st.dog);
+      r.member.username = acc.username; const photo = adopt(r);
       S.dog = Object.assign({}, r.dog.profile, {name: r.dog.name, photo: photo || ''}); DB.set('dog', S.dog).catch(() => {});
       st.askedThisOpen = false;
-      finishSetup(`欢迎！你是${esc(r.dog.name)}${esc(chosenRole)}。`);
+      finishSetup(`欢迎！你是${esc(r.dog.name)}${esc(chosenRole)}，账号是 ${esc(acc.username)}。`);
     } catch (e){
       btn.disabled = false; btn.textContent = '加入';
+      if (accountError(e.code)){ $('#jUserStat').textContent = accountError(e.code); $('#jUserStat').dataset.ok = '0'; if (e.code === 'username_taken') acct.userOk = false; updateJoinBtn(); return; }
       showToast(e.code === 'role_taken' ? '这个身份已经被选了，换一个' : e.code === 'family_full' ? '已经绑定两台手机了' : '没加入成功，检查一下网络');
       if (e.code === 'role_taken') findFamily();
     }
   }
-  async function recover(){
-    const raw = ($('#recIn').value || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), stat = $('#recStat'), btn = $('#doRecover');
-    if (raw.length !== 12){ stat.textContent = '找回码是 12 位字母和数字'; stat.dataset.ok = '0'; return; }
-    btn.disabled = true; btn.textContent = '找回中…';
+  async function login(){
+    const u = ($('#logUser').value || '').trim(), p = $('#logPw').value || '', stat = $('#logStat'), btn = $('#doLogin');
+    if (!u || !p){ stat.textContent = '填上账号和密码'; stat.dataset.ok = '0'; return; }
+    btn.disabled = true; btn.textContent = '登录中…';
     try {
-      const r = await api('/api/recover', {code: raw});
+      const r = await api('/api/login', {username: u, password: p});
       await resetLocal();
-      st.member = r.member; lsSet('pawdiary.member', st.member);
-      lsSet('pawdiary.recover', raw.match(/.{4}/g).join('-'));
-      const photo = r.dog.photo; delete r.dog.photo; st.dog = r.dog; lsSet('pawdiary.cloudDog', st.dog);
+      const photo = adopt(r);
       S.dog = Object.assign({}, r.dog.profile, {name: r.dog.name, photo: photo || ''}); DB.set('dog', S.dog).catch(() => {});
       st.askedThisOpen = false;
-      finishSetup(`找回来了！欢迎回来，${esc(r.dog.name)}${esc(r.member.role)}。记录正在同步…`, true);
+      finishSetup(`欢迎回来，${esc(r.dog.name)}${esc(r.member.role)}！记录正在同步…`);
     } catch (e){
-      btn.disabled = false; btn.textContent = '找回';
-      stat.textContent = e.code === 'no_such_code' ? '这个找回码不对，核对一下（换过码的话，旧码就不能用了）' : '连不上服务器，检查一下网络'; stat.dataset.ok = '0';
+      btn.disabled = false; btn.textContent = '登录';
+      stat.dataset.ok = '0';
+      stat.textContent = e.code === 'locked' ? '密码错太多次了，10 分钟后再试' : e.code === 'wrong_login' ? `账号或密码不对${e.left != null && e.left < 5 ? `，还能试 ${e.left} 次` : ''}` : '连不上服务器，检查一下网络';
     }
   }
 
-  /* ---- 找回码 ---- */
-  function showRecoverBox(code, intro){
-    const box = $('#recoverBox');
-    box.querySelector('h2').textContent = intro ? '新功能：找回码' : '保存好你的找回码';
-    box.querySelector('.code').textContent = code;
-    box.querySelector('p').textContent = `换手机、删了 App 或者清理了浏览器，用这个码就能找回${dogName()}和所有记录。请截图或者记在备忘录里，不要发给别人。`;
-    $('#recoverCopy').onclick = () => copyText(code);
-    $('#recoverOk').onclick = () => { box.hidden = true; maybeAsk(); };
+  /* ---- account: set it up later, change password, log out ---- */
+  function openAccountBox(mode){ // mode: 'setup' (first time) or 'password'
+    const box = $('#acctBox'), body = box.querySelector('.acctbody');
+    const has = !!st.username;
+    box.querySelector('h2').textContent = has ? '修改密码' : '设置账号密码';
+    body.innerHTML = has
+      ? `<p class="muted">账号：<b>${esc(st.username)}</b></p><div class="field"><label for="aPw">新密码（至少 6 位）</label><input id="aPw" type="password" maxlength="64" autocomplete="new-password"></div>`
+      : accountFields('a', `换手机或者删了 App 的时候，用账号密码登录就能找回${esc(dogName())}和所有记录。现在这台手机还没有账号。`);
+    const save = $('#acctSave'), later = $('#acctLater');
+    later.textContent = has ? '取消' : '以后再说';
+    const ready = () => { save.disabled = has ? ($('#aPw').value || '').length < 6 : !accountReady('a'); };
+    if (has) $('#aPw').addEventListener('input', ready); else wireAccount('a', ready);
+    ready();
+    later.onclick = () => { box.hidden = true; maybeAsk(); };
+    save.onclick = async () => {
+      save.disabled = true;
+      const payload = has ? {password: $('#aPw').value} : accountValue('a');
+      try {
+        const r = await api('/api/account', payload);
+        st.username = r.username; lsSet('pawdiary.username', st.username);
+        box.hidden = true; renderAccount(); showToast(has ? '密码改好了' : `账号设好了：${esc(r.username)}`); maybeAsk();
+      } catch (e){
+        save.disabled = false;
+        const msg = accountError(e.code) || '没保存成功，检查一下网络';
+        if (has) showToast(msg); else { $('#aUserStat').textContent = msg; $('#aUserStat').dataset.ok = '0'; if (e.code === 'username_taken') acct.userOk = false; }
+      }
+    };
     box.hidden = false;
   }
-  async function newRecoveryCode(show, intro){
-    try {
-      const r = await api('/api/recovery-code');
-      lsSet('pawdiary.recover', r.code); renderRecover();
-      if (show) showRecoverBox(r.code, intro);
-    } catch (_){ /* try again next time the app opens */ }
-  }
-  function renderRecover(){
-    const box = $('#recoverSec'); if (!box) return;
-    const code = lsGet('pawdiary.recover', null);
+  function renderAccount(){
+    const box = $('#accountSec'); if (!box) return;
     if (!st.member){ box.innerHTML = ''; return; }
-    box.innerHTML = `<h2 style="--hl:var(--sky)">找回码</h2>
-      <p class="muted">换手机、删了 App 或者清理了浏览器，在开始页面点「用找回码找回我的狗狗」，输入这个码就能找回${esc(dogName())}和所有记录。请截图保存，不要发给别人。</p>
-      ${code ? `<div class="reccode pb"><span class="code">${esc(code)}</span></div>
-        <div class="btnrow"><button class="btn small pb" id="recCopy" style="--fill:var(--sky)">复制找回码</button><button class="btn small pb" id="recNew" style="--fill:var(--paper-2)">换一个</button></div>`
-        : `<div class="btnrow"><button class="btn small pb" id="recNew" style="--fill:var(--sky)">生成找回码</button></div>`}`;
+    box.innerHTML = st.username
+      ? `<h2 style="--hl:var(--sky)">账号</h2><p class="lead" style="margin-top:0">账号：<strong>${esc(st.username)}</strong></p>
+        <p class="muted">换手机或者删了 App，在开始页面点「已有账号，登录」就能找回。</p>
+        <div class="btnrow"><button class="btn small pb" id="acctPw" style="--fill:var(--sky)">修改密码</button><button class="btn small pb" id="acctOut" style="--fill:var(--paper-2)">退出登录</button></div>`
+      : `<h2 style="--hl:var(--rose)">账号</h2><p class="setnote pb">这台手机还没有账号。万一换手机或者删了 App，${esc(dogName())}就找不回来了。</p>
+        <div class="btnrow"><button class="btn small pb" id="acctSet" style="--fill:var(--rose)">设置账号密码</button></div>`;
   }
   document.addEventListener('click', async e => {
-    const t = e.target.closest('#recCopy,#recNew'); if (!t) return;
-    if (t.id === 'recCopy') return copyText(lsGet('pawdiary.recover', ''));
-    if (lsGet('pawdiary.recover', null) && !await askConfirm({title: '换一个找回码？', text: '换了以后旧的找回码就不能用了，要重新截图保存新的。', ok: '换一个'})) return;
-    newRecoveryCode(true);
+    const t = e.target.closest('#acctPw,#acctSet,#acctOut'); if (!t) return;
+    if (t.id === 'acctOut'){
+      if (!await askConfirm({title: '退出登录？', text: `${dogName()}和记录都还在。之后用账号 ${st.username} 登录就能回来。`, ok: '退出登录'})) return;
+      clearTimeout(st.timer); await resetLocal(); renderSetup('start'); return;
+    }
+    openAccountBox();
   });
 
-  function finishSetup(msg, recovered){
+  function finishSetup(msg){
     $('#setup').hidden = true; st.pendingFamily = null; setupPhoto = null; chosenRole = null;
     lsSet('pawdiary.onboarded', false);
-    renderTop(); renderDogPin(); renderDogView(); renderAll(); renderOnboard();
+    renderTop(); renderDogPin(); renderDogView(); renderAll(); renderOnboard(); renderAccount();
     showToast(msg, 4500);
-    if (!recovered) newRecoveryCode(true);
     sync().then(() => { if (st.pendingFriend){ addFriend(st.pendingFriend); st.pendingFriend = null; } });
   }
 
   /* ---- boot ---- */
   async function boot(){
-    lsSet('pawdiary.me', null);
+    lsSet('pawdiary.me', null); lsSet('pawdiary.recover', null);
     try { st.outbox = (await DB.get('outbox')) || []; st.cellsOut = (await DB.get('cellsOut')) || []; } catch (_){}
     const q = new URLSearchParams(location.search), fam = q.get('family'), add = q.get('add');
     if (fam || add) history.replaceState(null, '', location.pathname);
@@ -1635,8 +1696,9 @@ const Cloud = (() => {
     }
     if (fam) showToast(`这台手机已经在${esc(dogName())}的家庭里了`);
     renderAway();
-    if (!lsGet('pawdiary.recover', null)) newRecoveryCode(true, true);
+    if (!st.username) openAccountBox();   // members from before accounts existed: ask first, before "跟你在一起吗"
     await sync();
+    if (st.username && !$('#acctBox').hidden && $('#acctBox').querySelector('#aUser')) { $('#acctBox').hidden = true; maybeAsk(); }
     if (st.pendingFriend){ addFriend(st.pendingFriend); st.pendingFriend = null; }
   }
   document.addEventListener('visibilitychange', () => {

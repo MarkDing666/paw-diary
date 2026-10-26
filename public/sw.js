@@ -1,6 +1,6 @@
 // Offline shell: app files come from the network first (so updates land), the cache is the fallback.
-const CACHE = 'pawdiary-v11';
-const SHELL = ['/', '/index.html', '/style.css?v=11', '/app.js?v=11', '/manifest.webmanifest', '/icon-192.png', '/apple-touch-icon.png',
+const CACHE = 'pawdiary-v12';
+const SHELL = ['/', '/index.html', '/style.css?v=12', '/app.js?v=12', '/manifest.webmanifest', '/icon-192.png', '/apple-touch-icon.png',
   'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js', 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css'];
 
 self.addEventListener('install', e => {
