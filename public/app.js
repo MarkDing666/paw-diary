@@ -1172,7 +1172,7 @@ const Cloud = (() => {
 
   /* ---- "年糕跟你在一起吗？" ---- */
   function maybeAsk(){
-    if (st.askedThisOpen || members().length < 2 || !$('#setup').hidden) return;
+    if (st.askedThisOpen || members().length < 2 || !$('#setup').hidden || !$('#recoverBox').hidden) return;
     st.askedThisOpen = true;
     const box = $('#holdAsk'), d = S.dog || {};
     box.querySelector('.ava').innerHTML = d.photo ? `<img src="${d.photo}" alt="">` : icon('dog', 'var(--clay)');
@@ -1354,7 +1354,7 @@ const Cloud = (() => {
   let famSig = '';
   function renderFamily(){
     const box = $('#familySec'); if (!box) return;
-    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; const dz = $('#dangerSec'); if (dz) dz.innerHTML = ''; return; }
+    if (!st.member || !st.dog){ box.innerHTML = ''; famSig = ''; const dz = $('#dangerSec'); if (dz) dz.innerHTML = ''; renderRecover(); return; }
     const ms = members(), name = dogName();
     // only redraw when something changed, so a half-confirmed button isn't reset by a background sync
     const sig = JSON.stringify([ms, st.dog.holder, st.dog.famCode, name, st.member.id]);
@@ -1368,6 +1368,7 @@ const Cloud = (() => {
         <span class="muted">把链接发给家人，对方打开后选自己的身份（比如${esc(name)}妈妈）。一只狗狗最多绑定两台手机。</span>
         <div class="btnrow" style="margin-top:0"><button class="btn small pb" id="famShare" style="--fill:var(--rose)">发家庭邀请链接</button><button class="btn small pb" id="famCopy" style="--fill:var(--paper-2)">复制家庭码</button></div></div>`
         : `<p class="muted" style="margin-top:8px">已经绑定两台手机了。换手机或者手机丢了，可以先把旧的那台「移出」，再重新邀请。</p>`}`;
+    renderRecover();
     const danger = $('#dangerSec');
     if (danger) danger.innerHTML = `<button class="btn small pb dangerbtn" id="leaveFam">${ms.length > 1 ? `这台手机退出${esc(name)}的家庭` : `删除${esc(name)}`}</button>`;
   }
@@ -1413,7 +1414,7 @@ const Cloud = (() => {
   let nameTimer = null, nameOk = false, chosenRole = null, joinInfo = null, setupPhoto = null;
   async function resetLocal(){
     st.member = null; st.dog = null; st.outbox = []; st.cellsOut = []; st.evCursor = 0; st.cellCursor = 0; st.friends = [];
-    ['pawdiary.member', 'pawdiary.cloudDog', 'pawdiary.evCursor', 'pawdiary.cellCursor'].forEach(k => lsSet(k, null));
+    ['pawdiary.member', 'pawdiary.cloudDog', 'pawdiary.evCursor', 'pawdiary.cellCursor', 'pawdiary.recover'].forEach(k => lsSet(k, null));
     S.events = []; S.dog = null; S.explored.clear(); expPts.length = 0;
     await DB.clearAll().catch(() => {});
     renderAll(); renderMap(); renderDogPin(); renderDogView(); map.triggerRepaint();
@@ -1435,9 +1436,11 @@ const Cloud = (() => {
         ${note ? `<p class="setnote pb">${esc(note)}</p>` : ''}
         <p class="muted">每只狗狗有一个独一无二的名字。一只狗狗最多绑定两台手机，比如爸爸和妈妈，一起记录。</p>
         <button class="btn primary pb" id="goCreate">新建我的狗狗</button>
-        <button class="btn pb" id="goJoin" style="--fill:var(--sky)">家人已经建好了，我要加入</button>`;
+        <button class="btn pb" id="goJoin" style="--fill:var(--sky)">家人已经建好了，我要加入</button>
+        <button class="linkbtn" id="goRecover">换了手机、删了 App？用找回码找回我的狗狗</button>`;
       $('#goCreate').onclick = () => renderSetup('create');
       $('#goJoin').onclick = () => renderSetup('join');
+      $('#goRecover').onclick = () => renderSetup('recover');
       return;
     }
     if (mode === 'create'){
@@ -1457,6 +1460,17 @@ const Cloud = (() => {
         try { setupPhoto = await readImage(f, 360, true); renderSetup('create'); $('#setName').value && checkName(); } catch (_){ showToast('这张图片打不开，换一张试试'); } });
       $('#doCreate').onclick = create;
       updateCreateBtn();
+      return;
+    }
+    if (mode === 'recover'){
+      card.innerHTML = `<button class="back" id="setBack" aria-label="返回">‹ 返回</button><h1>找回我的狗狗</h1>
+        <p class="muted">输入你保存的找回码（在原来那台手机「狗狗」页最下面）。找回后，旧手机上的这个身份会自动退出。</p>
+        <div class="field"><label for="recIn">找回码</label><input id="recIn" maxlength="16" autocomplete="off" autocapitalize="characters" placeholder="XXXX-XXXX-XXXX"></div>
+        <p class="namestat" id="recStat"></p>
+        <button class="btn primary pb" id="doRecover">找回</button>`;
+      $('#setBack').onclick = () => renderSetup('start');
+      $('#doRecover').onclick = recover;
+      $('#recIn').addEventListener('keydown', ev => { if (ev.key === 'Enter') recover(); });
       return;
     }
     if (mode === 'join'){
@@ -1545,11 +1559,65 @@ const Cloud = (() => {
       if (e.code === 'role_taken') findFamily();
     }
   }
-  function finishSetup(msg){
+  async function recover(){
+    const raw = ($('#recIn').value || '').toUpperCase().replace(/[^A-Z0-9]/g, ''), stat = $('#recStat'), btn = $('#doRecover');
+    if (raw.length !== 12){ stat.textContent = '找回码是 12 位字母和数字'; stat.dataset.ok = '0'; return; }
+    btn.disabled = true; btn.textContent = '找回中…';
+    try {
+      const r = await api('/api/recover', {code: raw});
+      await resetLocal();
+      st.member = r.member; lsSet('pawdiary.member', st.member);
+      lsSet('pawdiary.recover', raw.match(/.{4}/g).join('-'));
+      const photo = r.dog.photo; delete r.dog.photo; st.dog = r.dog; lsSet('pawdiary.cloudDog', st.dog);
+      S.dog = Object.assign({}, r.dog.profile, {name: r.dog.name, photo: photo || ''}); DB.set('dog', S.dog).catch(() => {});
+      st.askedThisOpen = false;
+      finishSetup(`找回来了！欢迎回来，${esc(r.dog.name)}${esc(r.member.role)}。记录正在同步…`, true);
+    } catch (e){
+      btn.disabled = false; btn.textContent = '找回';
+      stat.textContent = e.code === 'no_such_code' ? '这个找回码不对，核对一下（换过码的话，旧码就不能用了）' : '连不上服务器，检查一下网络'; stat.dataset.ok = '0';
+    }
+  }
+
+  /* ---- 找回码 ---- */
+  function showRecoverBox(code, intro){
+    const box = $('#recoverBox');
+    box.querySelector('h2').textContent = intro ? '新功能：找回码' : '保存好你的找回码';
+    box.querySelector('.code').textContent = code;
+    box.querySelector('p').textContent = `换手机、删了 App 或者清理了浏览器，用这个码就能找回${dogName()}和所有记录。请截图或者记在备忘录里，不要发给别人。`;
+    $('#recoverCopy').onclick = () => copyText(code);
+    $('#recoverOk').onclick = () => { box.hidden = true; maybeAsk(); };
+    box.hidden = false;
+  }
+  async function newRecoveryCode(show, intro){
+    try {
+      const r = await api('/api/recovery-code');
+      lsSet('pawdiary.recover', r.code); renderRecover();
+      if (show) showRecoverBox(r.code, intro);
+    } catch (_){ /* try again next time the app opens */ }
+  }
+  function renderRecover(){
+    const box = $('#recoverSec'); if (!box) return;
+    const code = lsGet('pawdiary.recover', null);
+    if (!st.member){ box.innerHTML = ''; return; }
+    box.innerHTML = `<h2 style="--hl:var(--sky)">找回码</h2>
+      <p class="muted">换手机、删了 App 或者清理了浏览器，在开始页面点「用找回码找回我的狗狗」，输入这个码就能找回${esc(dogName())}和所有记录。请截图保存，不要发给别人。</p>
+      ${code ? `<div class="reccode pb"><span class="code">${esc(code)}</span></div>
+        <div class="btnrow"><button class="btn small pb" id="recCopy" style="--fill:var(--sky)">复制找回码</button><button class="btn small pb" id="recNew" style="--fill:var(--paper-2)">换一个</button></div>`
+        : `<div class="btnrow"><button class="btn small pb" id="recNew" style="--fill:var(--sky)">生成找回码</button></div>`}`;
+  }
+  document.addEventListener('click', async e => {
+    const t = e.target.closest('#recCopy,#recNew'); if (!t) return;
+    if (t.id === 'recCopy') return copyText(lsGet('pawdiary.recover', ''));
+    if (lsGet('pawdiary.recover', null) && !await askConfirm({title: '换一个找回码？', text: '换了以后旧的找回码就不能用了，要重新截图保存新的。', ok: '换一个'})) return;
+    newRecoveryCode(true);
+  });
+
+  function finishSetup(msg, recovered){
     $('#setup').hidden = true; st.pendingFamily = null; setupPhoto = null; chosenRole = null;
     lsSet('pawdiary.onboarded', false);
     renderTop(); renderDogPin(); renderDogView(); renderAll(); renderOnboard();
     showToast(msg, 4500);
+    if (!recovered) newRecoveryCode(true);
     sync().then(() => { if (st.pendingFriend){ addFriend(st.pendingFriend); st.pendingFriend = null; } });
   }
 
@@ -1567,6 +1635,7 @@ const Cloud = (() => {
     }
     if (fam) showToast(`这台手机已经在${esc(dogName())}的家庭里了`);
     renderAway();
+    if (!lsGet('pawdiary.recover', null)) newRecoveryCode(true, true);
     await sync();
     if (st.pendingFriend){ addFriend(st.pendingFriend); st.pendingFriend = null; }
   }

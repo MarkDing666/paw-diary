@@ -36,11 +36,21 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS dpokes (id INTEGER PRIMARY KEY AUTOINCREMENT, from_dog TEXT, from_role TEXT, to_dog TEXT, t INTEGER)`,
   `CREATE INDEX IF NOT EXISTS dpokes_to ON dpokes (to_dog, t)`
 ];
+// added after launch; ALTER fails harmlessly when the column already exists
+const UPGRADES = [
+  `ALTER TABLE members ADD COLUMN recover_hash TEXT`,
+  `CREATE INDEX IF NOT EXISTS members_recover ON members (recover_hash)`
+];
 let schemaReady = null;
 function ensureSchema(db){
-  if (!schemaReady) schemaReady = db.batch(SCHEMA.map(s => db.prepare(s))).catch(e => { schemaReady = null; throw e; });
+  if (!schemaReady) schemaReady = (async () => {
+    await db.batch(SCHEMA.map(s => db.prepare(s)));
+    for (const u of UPGRADES){ try { await db.prepare(u).run(); } catch (_) {} }
+  })().catch(e => { schemaReady = null; throw e; });
   return schemaReady;
 }
+// 找回码: 12 characters shown as XXXX-XXXX-XXXX; only its hash is stored
+const recoverHash = code => sha256('recover:' + String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, ''));
 
 /* ---------- helpers ---------- */
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
@@ -166,6 +176,19 @@ async function handleApi(req, env, url){
 
   if (req.method !== 'POST') return fail(405, 'method');
 
+  // a phone that lost its data gets its place in the family back with the member's 找回码
+  if (path === '/api/recover'){
+    const b = await body(req);
+    const raw = String(b.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (raw.length !== 12) return fail(400, 'bad_code');
+    const m = await db.prepare('SELECT * FROM members WHERE recover_hash = ?').bind(await recoverHash(raw)).first();
+    if (!m) return fail(404, 'no_such_code');
+    const token = rand(24);
+    await db.prepare('UPDATE members SET token_hash = ?, seen = ? WHERE id = ?').bind(await sha256(token), now, m.id).run(); // the old phone is signed out
+    const dog = await db.prepare('SELECT * FROM dogs WHERE id = ?').bind(m.dog_id).first();
+    return json({member: {id: m.id, token, dogId: m.dog_id, role: m.role}, dog: dogForFamily(dog, await membersOf(db, m.dog_id), true)});
+  }
+
   if (path === '/api/dog/create'){
     const b = await body(req);
     const v = validName(b.name);
@@ -281,6 +304,12 @@ async function handleApi(req, env, url){
     const other = ms.find(m => m.id !== me.id);
     if (dog.holder === me.id && other) await db.prepare('UPDATE dogs SET holder = ?, holder_at = ? WHERE id = ?').bind(other.id, now, dog.id).run();
     return json({ok: true, dogDeleted: false});
+  }
+
+  if (path === '/api/recovery-code'){
+    const code = rand(12, CODE_ALPHABET);
+    await db.prepare('UPDATE members SET recover_hash = ? WHERE id = ?').bind(await recoverHash(code), me.id).run();
+    return json({code: code.match(/.{4}/g).join('-')});
   }
 
   if (path === '/api/reset-code' || path === '/api/reset-fam-code'){
