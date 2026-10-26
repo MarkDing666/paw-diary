@@ -1,0 +1,17 @@
+{
+  "name": "爪印日记",
+  "short_name": "爪印日记",
+  "description": "彩铅手绘风的遛狗日记：真实地图上记录便便、尿尿和遛狗足迹。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ECEFE6",
+  "theme_color": "#ECEFE6",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+    {"src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

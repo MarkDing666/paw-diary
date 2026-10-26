@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>爪印日记</title>
+<meta name="description" content="彩铅手绘风的遛狗日记：狗狗照片当地图头像，真实地图上记录便便、尿尿和遛狗路线。">
+<meta name="theme-color" content="#ECEFE6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#20221E" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="爪印日记">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=ZCOOL+KuaiLe&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <filter id="pencil" x="-4%" y="-8%" width="108%" height="116%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="3" result="warp"/>
+      <feDisplacementMap in="SourceGraphic" in2="warp" scale="3" xChannelSelector="R" yChannelSelector="G" result="wob"/>
+      <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="1" seed="8" result="grain"/>
+      <feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -2.2 1.75" result="mask"/>
+      <feComposite in="wob" in2="mask" operator="in"/>
+    </filter>
+    <filter id="wobble" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.06" numOctaves="2" seed="5" result="w"/>
+      <feDisplacementMap in="SourceGraphic" in2="w" scale="1.6" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <pattern id="h-poop" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(32)"><rect width="4" height="4" style="fill:var(--poop);opacity:.22"/><rect width="1.7" height="4" style="fill:var(--poop);opacity:.85"/></pattern>
+    <pattern id="h-grass" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(32)"><rect width="4" height="4" style="fill:var(--grass);opacity:.22"/><rect width="1.7" height="4" style="fill:var(--grass);opacity:.85"/></pattern>
+    <pattern id="h-sky" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(32)"><rect width="4" height="4" style="fill:var(--sky);opacity:.22"/><rect width="1.7" height="4" style="fill:var(--sky);opacity:.85"/></pattern>
+  </defs>
+</svg>
+
+<div id="app">
+  <header class="top">
+    <button class="dogchip" id="dogChip" aria-label="狗狗资料">
+      <span class="ava pb" id="topAva"></span>
+      <div><div class="nm" id="topName">狗狗</div><div class="sub" id="topSub"></div></div>
+    </button>
+    <div class="today" aria-label="今日便便">
+      <div class="tchip"><span id="topPoopIc"></span><span id="topPoop">0</span></div>
+      <div class="since" id="topSince"></div>
+    </div>
+  </header>
+
+  <main>
+    <section class="view" id="v-map" aria-label="地图">
+      <div id="map"></div>
+      <div class="grainover" aria-hidden="true"></div>
+      <div class="mui">
+        <div class="mtop">
+          <div class="mstack">
+            <div class="card pb awaycard live" id="awayCard" hidden></div>
+            <button class="card pb wx live" id="wx" hidden></button>
+            <div class="card pb live" id="onboard" hidden></div>
+            <div class="card pb gpsnote live" id="gpsNote" hidden></div>
+            <div class="card pb walkpanel live" id="walkPanel" hidden></div>
+            <div class="card pb info live" id="info" hidden></div>
+            <div class="card pb fpcard live" id="fpCard"></div>
+            <button class="card pb livechip live" id="liveChip" hidden></button>
+          </div>
+          <div class="mside">
+            <button class="round pb live" id="recenter" aria-label="回到狗狗身边" title="回到狗狗身边"></button>
+            <button class="pill pb live" id="filterBtn" aria-label="切换地图上显示的记录">24 小时</button>
+          </div>
+        </div>
+        <div class="mbottom">
+          <div class="toast pb live out" id="toast" hidden></div>
+          <button class="walkbtn pb live" id="walkBtn"></button>
+          <div class="tray pb live" id="tray"></div>
+          <input id="momentIn" type="file" accept="image/*" hidden>
+        </div>
+      </div>
+    </section>
+
+    <section class="view scroll" id="v-log" aria-label="日记" hidden>
+      <div class="inner" id="logInner"></div>
+    </section>
+
+    <section class="view scroll" id="v-friends" aria-label="狗友" hidden>
+      <div class="inner" id="friendsInner"></div>
+    </section>
+
+    <section class="view scroll" id="v-dog" aria-label="狗狗资料" hidden>
+      <div class="inner">
+        <div class="photo">
+          <div class="bigava pb" id="bigAva"></div>
+          <div class="agebig" id="ageBig"></div>
+          <label class="btn pb" for="photoIn"><span id="camIc"></span>拍照 / 选照片</label>
+          <input id="photoIn" type="file" accept="image/*" hidden>
+        </div>
+        <form id="dogForm" autocomplete="off">
+          <div class="grid2">
+            <div class="field"><label for="f-name">名字</label><input id="f-name" maxlength="16" placeholder="比如：豆豆"></div>
+            <div class="field"><label for="f-breed">品种</label><input id="f-breed" maxlength="20" placeholder="比如：柯基"></div>
+          </div>
+          <fieldset class="field">
+            <legend>性别</legend>
+            <div class="seg">
+              <label><input type="radio" name="sex" value="f" id="f-sex-f"><span class="pb">妹妹</span></label>
+              <label><input type="radio" name="sex" value="m" id="f-sex-m"><span class="pb">弟弟</span></label>
+            </div>
+          </fieldset>
+          <div class="grid2">
+            <div class="field"><label for="f-bday">生日</label><input id="f-bday" type="date"></div>
+            <div class="field"><label for="f-weight">体重（kg）</label><input id="f-weight" type="number" step="0.1" min="0" inputmode="decimal" placeholder="10.5"></div>
+          </div>
+          <div class="field"><label for="f-goal">每天遛狗目标（分钟）</label><input id="f-goal" type="number" step="5" min="5" max="300" inputmode="numeric" placeholder="40"></div>
+          <div class="sec"><h2 style="--hl:var(--sky)">健康提醒</h2>
+            <div class="grid2">
+              <div class="field"><label for="f-worm">下次驱虫</label><input id="f-worm" type="date"></div>
+              <div class="field"><label for="f-vax">下次打疫苗</label><input id="f-vax" type="date"></div>
+            </div>
+          </div>
+          <button type="submit" class="btn primary pb">保存</button>
+        </form>
+        <div class="sec" id="familySec"></div>
+        <div class="sec" id="weightSec"></div>
+        <div class="sec">
+          <h2 style="--hl:var(--clay)">备份</h2>
+          <p class="muted">记录保存在这台手机的浏览器里。换手机或清理浏览器数据前，先导出一份备份。</p>
+          <div class="btnrow">
+            <button class="btn pb" id="exportBtn" style="--fill:var(--sun)">导出备份</button>
+            <label class="btn pb" for="importIn" style="--fill:var(--paper-2)">从备份恢复</label>
+            <input id="importIn" type="file" accept="application/json,.json" hidden>
+          </div>
+        </div>
+        <p class="note" id="storeNote"></p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab pb" role="tab" data-v="map" aria-selected="true"><span data-ic="map"></span>地图</button>
+    <button class="tab pb" role="tab" data-v="log" aria-selected="false"><span data-ic="book"></span>日记<i class="dotbadge" id="logBadge" hidden></i></button>
+    <button class="tab pb" role="tab" data-v="friends" aria-selected="false"><span data-ic="heart"></span>狗友<i class="dotbadge" id="friendBadge" hidden></i></button>
+    <button class="tab pb" role="tab" data-v="dog" aria-selected="false"><span data-ic="dog"></span>狗狗</button>
+  </nav>
+</div>
+
+<div class="setup" id="setup" hidden>
+  <div class="setupcard pb" id="setupCard" role="dialog" aria-label="开始"></div>
+</div>
+
+<div class="lbx" id="holdAsk" hidden>
+  <div class="askcard pb" role="dialog" aria-labelledby="holdTitle">
+    <span class="ava big pb"></span>
+    <h2 id="holdTitle"></h2>
+    <p class="muted"></p>
+    <div class="btnrow"><button class="btn pb" id="holdNo" style="--fill:var(--paper-2)">不在</button><button class="btn primary pb" id="holdYes">在我身边</button></div>
+  </div>
+</div>
+
+<div class="lbx" id="lbx" hidden>
+  <div class="polaroid pb" role="dialog" aria-label="照片">
+    <img id="lbImg" alt="">
+    <div class="meta" id="lbMeta"></div>
+    <label class="muted" for="lbNote">写一句话</label>
+    <textarea id="lbNote" maxlength="140" placeholder="比如：第一次见到海"></textarea>
+    <div class="bar"><button class="btn pb" id="lbDel" style="--fill:var(--rose)">删除</button><button class="btn pb" id="lbClose">关闭</button><button class="btn pb" id="lbSave" style="--fill:var(--grass)">保存</button></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

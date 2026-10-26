@@ -1,0 +1,19 @@
+{
+  // 爪印日记: static app in ./public, API in ./worker, shared data in D1.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "paw",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "paw-diary", "database_id": "7a786eeb-87b8-48fd-8969-0c3e2a2841e0" }
+  ],
+  "routes": [
+    { "pattern": "paw.kkmeflicker.com", "custom_domain": true }
+  ],
+  "observability": { "enabled": true }
+}
